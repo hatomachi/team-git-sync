@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, setIcon, App } from "obsidian";
 import TeamGitSyncPlugin from "../../main";
 import { ConfirmModal } from "../ui/ConfirmModal";
 import { DiffModal } from "../ui/DiffModal";
-
+import { SimpleGit } from "simple-git";
 export const GIT_SYNC_VIEW_TYPE = "team-git-sync-view";
 
 export class GitSyncView extends ItemView {
@@ -76,29 +76,56 @@ export class GitSyncView extends ItemView {
 
     private async renderStatus(contentEl: HTMLElement, titleEl: HTMLElement) {
         contentEl.empty();
-
-        const gitInstance = this.plugin.getGitForCurrentFile();
-        if (!gitInstance) {
-            titleEl.textContent = "No Repo Selected";
-            contentEl.createEl("p", {
-                text: "Please open a file located within a team's Git folder to see its sync status.",
-                cls: "text-muted"
-            });
-            return;
-        }
-
-        // Update title - We don't have direct access to _baseDir safely, 
-        // so we'll just indicate we're looking at the current active file's repo.
-        const activeFile = this.plugin.app.workspace.getActiveFile();
-        const teamFolder = activeFile ? activeFile.path.split('/')[0] : "Unknown";
-        titleEl.textContent = `Repo: ${teamFolder}`;
+        titleEl.textContent = "All Repositories";
 
         new Notice("Refreshing Git Status...");
-        const loadingEl = contentEl.createEl("div", { text: "Loading Git status..." });
+        const loadingEl = contentEl.createEl("div", { text: "Locating repositories..." });
+
+        try {
+            const repos = await this.plugin.getAllGitRepos();
+            loadingEl.remove();
+
+            if (repos.length === 0) {
+                contentEl.createEl("p", {
+                    text: "No Git repositories found at the vault root.",
+                    cls: "text-muted"
+                });
+                return;
+            }
+
+            for (const repo of repos) {
+                // Kick off render independently so they don't block each other
+                this.renderRepoSection(contentEl, repo.folderName, repo.gitInstance);
+            }
+        } catch (error) {
+            loadingEl.remove();
+            contentEl.createEl("p", {
+                text: `Error scanning repositories: ${(error as Error).message}`,
+                cls: "text-error"
+            });
+        }
+    }
+
+    private async renderRepoSection(containerEl: HTMLElement, folderName: string, gitInstance: SimpleGit) {
+        // Create section container
+        const sectionEl = containerEl.createEl("div", { cls: "repo-section" });
+        sectionEl.style.border = "1px solid var(--background-modifier-border)";
+        sectionEl.style.borderRadius = "6px";
+        sectionEl.style.padding = "10px";
+        sectionEl.style.marginBottom = "15px";
+
+        // Header
+        const headerEl = sectionEl.createEl("h5", { text: folderName });
+        headerEl.style.margin = "0 0 10px 0";
+        headerEl.style.fontWeight = "bold";
+
+        const contentEl = sectionEl.createEl("div");
+
+        const statusLoadingEl = contentEl.createEl("div", { text: "Loading status...", cls: "text-muted" });
 
         try {
             const status = await gitInstance.status();
-            loadingEl.remove();
+            statusLoadingEl.remove();
 
             const hasChanges = status.files.length > 0;
             const hasUnpushed = status.ahead > 0;
@@ -106,8 +133,9 @@ export class GitSyncView extends ItemView {
             if (!hasChanges && !hasUnpushed) {
                 contentEl.createEl("p", {
                     text: "No changes. You are up to date.",
-                    cls: "text-success"
+                    cls: "text-success",
                 });
+                contentEl.lastElementChild?.setAttribute("style", "margin: 0;");
                 return;
             }
 
@@ -115,7 +143,7 @@ export class GitSyncView extends ItemView {
                 const warnEl = contentEl.createEl("div", {
                     cls: "team-git-sync-warning"
                 });
-                warnEl.style.padding = "10px";
+                warnEl.style.padding = "8px";
                 warnEl.style.backgroundColor = "rgba(255, 150, 0, 0.2)";
                 warnEl.style.border = "1px solid rgba(255, 150, 0, 0.5)";
                 warnEl.style.borderRadius = "4px";
@@ -138,7 +166,6 @@ export class GitSyncView extends ItemView {
                     itemEl.style.alignItems = "center";
                     itemEl.style.gap = "8px";
 
-                    // Status badge
                     const badgeEl = itemEl.createEl("span", { text: file.working_dir || file.index });
                     badgeEl.style.fontSize = "0.7em";
                     badgeEl.style.padding = "2px 4px";
@@ -147,43 +174,40 @@ export class GitSyncView extends ItemView {
                     badgeEl.style.color = "var(--text-on-accent)";
                     badgeEl.style.flexShrink = "0";
 
-                    // Filename
                     const nameEl = itemEl.createEl("span", { text: file.path });
                     nameEl.style.flexGrow = "1";
                     nameEl.style.wordBreak = "break-all";
                     nameEl.style.cursor = "pointer";
                     nameEl.style.textDecoration = "underline";
-                    nameEl.onclick = () => this.showDiff(file.path, file.working_dir || file.index);
+                    nameEl.onclick = () => this.showDiff(gitInstance, file.path, file.working_dir || file.index);
 
-                    // Revert Button
                     const revertBtn = itemEl.createEl("button", { cls: "clickable-icon" });
                     setIcon(revertBtn, "undo-2");
                     revertBtn.title = "Revert changes";
                     revertBtn.style.flexShrink = "0";
-                    revertBtn.onclick = () => this.handleRevert(file.path, file.working_dir || file.index);
+                    revertBtn.onclick = () => this.handleRevert(folderName, gitInstance, file.path, file.working_dir || file.index);
                 }
             }
 
             // Sync UI Container
             const syncUIEl = contentEl.createEl("div", { cls: "team-git-sync-actions" });
-            syncUIEl.style.marginTop = "20px";
+            syncUIEl.style.marginTop = "15px";
             syncUIEl.style.display = "flex";
             syncUIEl.style.flexDirection = "column";
             syncUIEl.style.gap = "10px";
             syncUIEl.style.borderTop = "1px solid var(--background-modifier-border)";
-            syncUIEl.style.paddingTop = "15px";
+            syncUIEl.style.paddingTop = "10px";
 
-            // Row for input and button
             const syncRow = syncUIEl.createEl("div");
             syncRow.style.display = "flex";
             syncRow.style.gap = "10px";
 
             const msgInput = syncRow.createEl("input", { type: "text" });
-            msgInput.placeholder = "Commit message (optional)";
+            msgInput.placeholder = "Commit message";
             msgInput.style.flex = "1";
             msgInput.onkeydown = (e) => {
                 if (e.key === "Enter") {
-                    this.handleSync(msgInput.value, syncUIEl);
+                    this.handleSync(folderName, gitInstance, msgInput.value, syncUIEl);
                 }
             };
 
@@ -198,11 +222,11 @@ export class GitSyncView extends ItemView {
 
             syncBtn.onclick = () => {
                 syncBtn.blur();
-                this.handleSync(msgInput.value, syncUIEl);
+                this.handleSync(folderName, gitInstance, msgInput.value, syncUIEl);
             };
 
         } catch (error) {
-            loadingEl.remove();
+            statusLoadingEl.remove();
             contentEl.createEl("p", {
                 text: `Error getting status: ${(error as Error).message}`,
                 cls: "text-error"
@@ -210,36 +234,27 @@ export class GitSyncView extends ItemView {
         }
     }
 
-    private async handleRevert(filePath: string, fileStatus: string) {
-        const gitInstance = this.plugin.getGitForCurrentFile();
-        if (!gitInstance) return;
-
+    private async handleRevert(folderName: string, gitInstance: SimpleGit, filePath: string, fileStatus: string) {
         const modal = new ConfirmModal(
             this.app,
             "Revert Changes",
-            `Are you sure you want to revert changes to "${filePath}"? This action cannot be undone.`,
+            `Are you sure you want to revert changes to "${filePath}" in repo "${folderName}"? This action cannot be undone.`,
             async () => {
                 try {
                     if (fileStatus === '?' || fileStatus === 'A') {
                         // Untracked or just added - remove the file
-                        // Alternatively, we could just checkout if it's 'A', but clean is safer for untracked '?'
-                        const fsAdapter = this.plugin.app.vault.adapter as any;
-                        const activeFile = this.plugin.app.workspace.getActiveFile();
-                        const teamFolder = activeFile ? activeFile.path.split('/')[0] : "";
-
-                        const vaultPath = `${teamFolder}/${filePath}`;
+                        const vaultPath = `${folderName}/${filePath}`;
                         const file = this.plugin.app.vault.getAbstractFileByPath(vaultPath);
                         if (file) {
                             await this.plugin.app.vault.trash(file, true);
                         } else {
-                            // Fallback if Obsidian API doesn't find it yet
                             await gitInstance.clean('f', ['--', filePath]);
                         }
                     } else {
                         // Modified or Deleted - Checkout from index/HEAD
                         await gitInstance.checkout(['--', filePath]);
                     }
-                    new Notice(`Reverted ${filePath}`);
+                    new Notice(`Reverted ${filePath} in ${folderName}`);
                     await this.refreshStatus();
                 } catch (error) {
                     console.error("Revert error:", error);
@@ -250,20 +265,15 @@ export class GitSyncView extends ItemView {
         modal.open();
     }
 
-    private async showDiff(filePath: string, fileStatus: string) {
-        const gitInstance = this.plugin.getGitForCurrentFile();
-        if (!gitInstance) return;
-
+    private async showDiff(gitInstance: SimpleGit, filePath: string, fileStatus: string) {
         let diffText = "";
         try {
             if (fileStatus === '?' || fileStatus === 'A') {
-                // Untracked or added
                 diffText = await gitInstance.diff(['--', filePath]);
                 if (!diffText && fileStatus === '?') {
                     diffText = `File is untracked. All contents are new.`;
                 }
             } else {
-                // Modified or deleted
                 diffText = await gitInstance.diff(['--', filePath]);
             }
 
@@ -275,13 +285,10 @@ export class GitSyncView extends ItemView {
         }
     }
 
-    private async handleSync(commitMessage: string, syncUIEl?: HTMLElement) {
-        const gitInstance = this.plugin.getGitForCurrentFile();
-        if (!gitInstance) return;
-
-        // UI elements for status and error
+    private async handleSync(folderName: string, gitInstance: SimpleGit, commitMessage: string, syncUIEl?: HTMLElement) {
         let syncBtn: HTMLButtonElement | null = null;
         let syncStatusEl: HTMLElement | null = null;
+        
         if (syncUIEl) {
             syncBtn = syncUIEl.querySelector("button") as HTMLButtonElement | null;
             if (syncBtn) syncBtn.disabled = true;
@@ -293,7 +300,6 @@ export class GitSyncView extends ItemView {
                 syncStatusEl.style.color = "var(--text-accent)";
             }
             
-            // Clear previous error
             const existingError = syncUIEl.querySelector(".sync-error");
             if (existingError) existingError.remove();
         }
@@ -315,7 +321,7 @@ export class GitSyncView extends ItemView {
             }
         };
 
-        const notice = new Notice("Syncing...", 0); // Keep open until finished
+        const notice = new Notice(`Syncing ${folderName}...`, 0);
 
         try {
             updateStatus("🔄 Checking status...");
@@ -339,7 +345,7 @@ export class GitSyncView extends ItemView {
                 if (pullStatus.conflicted.length > 0) {
                     notice.setMessage("Resolving conflicts...");
                     updateStatus("🔄 Resolving conflicts...");
-                    await this.resolveConflicts(gitInstance);
+                    await this.resolveConflicts(folderName, gitInstance);
                     new Notice("競合が発生しました。あなたの変更は '_conflict' ファイルとして退避されました。", 10000);
                 } else {
                     throw new Error(`Pull failed: ${pullErr}`);
@@ -351,28 +357,23 @@ export class GitSyncView extends ItemView {
 
             updateStatus("✅ Sync Successful!");
             notice.hide();
-            new Notice("Sync Successful!");
+            new Notice(`Sync Successful for ${folderName}!`);
 
-            // Refresh view
             await this.refreshStatus();
 
         } catch (error) {
             notice.hide();
-            console.error("Sync error:", error);
+            console.error(`Sync error in ${folderName}:`, error);
             showError((error as Error).message);
-            new Notice(`Sync failed: ${(error as Error).message}`, 10000);
+            new Notice(`Sync failed for ${folderName}: ${(error as Error).message}`, 10000);
             if (syncBtn) syncBtn.disabled = false;
         }
     }
 
-    private async resolveConflicts(gitInstance: any) {
+    private async resolveConflicts(folderName: string, gitInstance: SimpleGit) {
         const status = await gitInstance.status();
         const conflictedFiles = status.conflicted;
 
-        const activeFile = this.plugin.app.workspace.getActiveFile();
-        const teamFolder = activeFile ? activeFile.path.split('/')[0] : "";
-
-        // moment is globally available in Obsidian
         const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
 
         for (const filePath of conflictedFiles) {
@@ -385,7 +386,7 @@ export class GitSyncView extends ItemView {
                 const ext = fileParts.length > 1 ? fileParts.pop() : "md";
                 const baseName = fileParts.join('.');
                 const backupName = `${baseName}_conflict_${timestamp}.${ext}`;
-                const backupVaultPath = `${teamFolder}/${backupName}`;
+                const backupVaultPath = `${folderName}/${backupName}`;
 
                 // Save our local changes to the backup file
                 await this.plugin.app.vault.create(backupVaultPath, localContent);
@@ -403,8 +404,6 @@ export class GitSyncView extends ItemView {
 
         // Add the newly created backup files to git
         await gitInstance.add('.');
-
-        // Complete the merge commit
         await gitInstance.commit("Resolve merge conflict: backup local changes and accept theirs");
     }
 }

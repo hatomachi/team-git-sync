@@ -114,6 +114,31 @@ export default class TeamGitSyncPlugin extends Plugin {
         }
     }
 
+    async getAllGitRepos(): Promise<Array<{ folderName: string, gitInstance: SimpleGit }>> {
+        const adapter = this.app.vault.adapter;
+        if (!(adapter instanceof FileSystemAdapter)) {
+            return [];
+        }
+
+        const basePath = adapter.getBasePath();
+        const listResult = await adapter.list('/');
+        const repos: Array<{ folderName: string, gitInstance: SimpleGit }> = [];
+
+        for (const folder of listResult.folders) {
+            // Check if .git exists in the folder
+            const exists = await adapter.exists(`${folder}/.git`);
+            if (exists) {
+                repos.push({
+                    folderName: folder,
+                    gitInstance: simpleGit(path.join(basePath, folder))
+                });
+            }
+        }
+
+        // Alphabetical sort for consistent UI updates
+        repos.sort((a, b) => a.folderName.localeCompare(b.folderName));
+        return repos;
+    }
     onunload() {
         console.log('Unloading Team Git Sync plugin');
     }
