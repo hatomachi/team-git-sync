@@ -100,7 +100,10 @@ export class GitSyncView extends ItemView {
             const status = await gitInstance.status();
             loadingEl.remove();
 
-            if (status.files.length === 0) {
+            const hasChanges = status.files.length > 0;
+            const hasUnpushed = status.ahead > 0;
+
+            if (!hasChanges && !hasUnpushed) {
                 contentEl.createEl("p", {
                     text: "No changes. You are up to date.",
                     cls: "text-success"
@@ -108,62 +111,83 @@ export class GitSyncView extends ItemView {
                 return;
             }
 
-            const listEl = contentEl.createEl("ul");
-            listEl.style.listStyleType = "none";
-            listEl.style.padding = "0";
-            listEl.style.margin = "0";
+            if (hasUnpushed) {
+                const warnEl = contentEl.createEl("div", {
+                    cls: "team-git-sync-warning"
+                });
+                warnEl.style.padding = "10px";
+                warnEl.style.backgroundColor = "rgba(255, 150, 0, 0.2)";
+                warnEl.style.border = "1px solid rgba(255, 150, 0, 0.5)";
+                warnEl.style.borderRadius = "4px";
+                warnEl.style.marginBottom = "10px";
+                warnEl.style.color = "var(--text-normal)";
+                warnEl.textContent = `⚠️ 未Pushのコミットが ${status.ahead} 件あります`;
+            }
 
-            for (const file of status.files) {
-                const itemEl = listEl.createEl("li");
-                itemEl.style.padding = "6px 0";
-                itemEl.style.borderBottom = "1px solid var(--background-modifier-border)";
-                itemEl.style.display = "flex";
-                itemEl.style.alignItems = "center";
-                itemEl.style.gap = "8px";
+            if (hasChanges) {
+                const listEl = contentEl.createEl("ul");
+                listEl.style.listStyleType = "none";
+                listEl.style.padding = "0";
+                listEl.style.margin = "0";
 
-                // Status badge
-                const badgeEl = itemEl.createEl("span", { text: file.working_dir || file.index });
-                badgeEl.style.fontSize = "0.7em";
-                badgeEl.style.padding = "2px 4px";
-                badgeEl.style.borderRadius = "4px";
-                badgeEl.style.backgroundColor = "var(--text-accent)";
-                badgeEl.style.color = "var(--text-on-accent)";
-                badgeEl.style.flexShrink = "0";
+                for (const file of status.files) {
+                    const itemEl = listEl.createEl("li");
+                    itemEl.style.padding = "6px 0";
+                    itemEl.style.borderBottom = "1px solid var(--background-modifier-border)";
+                    itemEl.style.display = "flex";
+                    itemEl.style.alignItems = "center";
+                    itemEl.style.gap = "8px";
 
-                // Filename
-                const nameEl = itemEl.createEl("span", { text: file.path });
-                nameEl.style.flexGrow = "1";
-                nameEl.style.wordBreak = "break-all";
-                nameEl.style.cursor = "pointer";
-                nameEl.style.textDecoration = "underline";
-                nameEl.onclick = () => this.showDiff(file.path, file.working_dir || file.index);
+                    // Status badge
+                    const badgeEl = itemEl.createEl("span", { text: file.working_dir || file.index });
+                    badgeEl.style.fontSize = "0.7em";
+                    badgeEl.style.padding = "2px 4px";
+                    badgeEl.style.borderRadius = "4px";
+                    badgeEl.style.backgroundColor = "var(--text-accent)";
+                    badgeEl.style.color = "var(--text-on-accent)";
+                    badgeEl.style.flexShrink = "0";
 
-                // Revert Button
-                const revertBtn = itemEl.createEl("button", { cls: "clickable-icon" });
-                setIcon(revertBtn, "undo-2");
-                revertBtn.title = "Revert changes";
-                revertBtn.style.flexShrink = "0";
-                revertBtn.onclick = () => this.handleRevert(file.path, file.working_dir || file.index);
+                    // Filename
+                    const nameEl = itemEl.createEl("span", { text: file.path });
+                    nameEl.style.flexGrow = "1";
+                    nameEl.style.wordBreak = "break-all";
+                    nameEl.style.cursor = "pointer";
+                    nameEl.style.textDecoration = "underline";
+                    nameEl.onclick = () => this.showDiff(file.path, file.working_dir || file.index);
+
+                    // Revert Button
+                    const revertBtn = itemEl.createEl("button", { cls: "clickable-icon" });
+                    setIcon(revertBtn, "undo-2");
+                    revertBtn.title = "Revert changes";
+                    revertBtn.style.flexShrink = "0";
+                    revertBtn.onclick = () => this.handleRevert(file.path, file.working_dir || file.index);
+                }
             }
 
             // Sync UI Container
             const syncUIEl = contentEl.createEl("div", { cls: "team-git-sync-actions" });
             syncUIEl.style.marginTop = "20px";
             syncUIEl.style.display = "flex";
+            syncUIEl.style.flexDirection = "column";
             syncUIEl.style.gap = "10px";
             syncUIEl.style.borderTop = "1px solid var(--background-modifier-border)";
             syncUIEl.style.paddingTop = "15px";
 
-            const msgInput = syncUIEl.createEl("input", { type: "text" });
+            // Row for input and button
+            const syncRow = syncUIEl.createEl("div");
+            syncRow.style.display = "flex";
+            syncRow.style.gap = "10px";
+
+            const msgInput = syncRow.createEl("input", { type: "text" });
             msgInput.placeholder = "Commit message (optional)";
             msgInput.style.flex = "1";
             msgInput.onkeydown = (e) => {
                 if (e.key === "Enter") {
-                    this.handleSync(msgInput.value);
+                    this.handleSync(msgInput.value, syncUIEl);
                 }
             };
 
-            const syncBtn = syncUIEl.createEl("button", { cls: "mod-cta" });
+            const syncBtn = syncRow.createEl("button", { cls: "mod-cta" });
             syncBtn.style.display = "flex";
             syncBtn.style.alignItems = "center";
             syncBtn.style.gap = "5px";
@@ -174,7 +198,7 @@ export class GitSyncView extends ItemView {
 
             syncBtn.onclick = () => {
                 syncBtn.blur();
-                this.handleSync(msgInput.value);
+                this.handleSync(msgInput.value, syncUIEl);
             };
 
         } catch (error) {
@@ -251,40 +275,81 @@ export class GitSyncView extends ItemView {
         }
     }
 
-    private async handleSync(commitMessage: string) {
+    private async handleSync(commitMessage: string, syncUIEl?: HTMLElement) {
         const gitInstance = this.plugin.getGitForCurrentFile();
         if (!gitInstance) return;
 
-        const notice = new Notice("Syncing... (Add, Commit, Pull, Push)", 0); // Keep open until finished
+        // UI elements for status and error
+        let syncBtn: HTMLButtonElement | null = null;
+        let syncStatusEl: HTMLElement | null = null;
+        if (syncUIEl) {
+            syncBtn = syncUIEl.querySelector("button") as HTMLButtonElement | null;
+            if (syncBtn) syncBtn.disabled = true;
+
+            syncStatusEl = syncUIEl.querySelector(".sync-status") as HTMLElement | null;
+            if (!syncStatusEl) {
+                syncStatusEl = syncUIEl.createEl("div", { cls: "sync-status", text: "" });
+                syncStatusEl.style.fontWeight = "bold";
+                syncStatusEl.style.color = "var(--text-accent)";
+            }
+            
+            // Clear previous error
+            const existingError = syncUIEl.querySelector(".sync-error");
+            if (existingError) existingError.remove();
+        }
+
+        const updateStatus = (msg: string) => {
+            if (syncStatusEl) syncStatusEl.textContent = msg;
+        };
+
+        const showError = (msg: string) => {
+            if (syncStatusEl) syncStatusEl.textContent = "";
+            if (syncUIEl) {
+                const errorEl = syncUIEl.createEl("div", { cls: "sync-error" });
+                errorEl.style.padding = "10px";
+                errorEl.style.backgroundColor = "var(--background-modifier-error)";
+                errorEl.style.color = "var(--text-on-accent)";
+                errorEl.style.borderRadius = "4px";
+                errorEl.style.marginTop = "10px";
+                errorEl.textContent = `❌ Error: ${msg}`;
+            }
+        };
+
+        const notice = new Notice("Syncing...", 0); // Keep open until finished
 
         try {
-            // 1. Add all changes
-            await gitInstance.add('.');
+            updateStatus("🔄 Checking status...");
+            const status = await gitInstance.status();
+            const hasChanges = status.files.length > 0;
 
-            // 2. Commit
-            const msg = commitMessage.trim() || `Auto-sync from Obsidian: ${new Date().toLocaleString()}`;
-            await gitInstance.commit(msg);
+            if (hasChanges) {
+                updateStatus("🔄 Adding & Committing...");
+                await gitInstance.add('.');
+                const msg = commitMessage.trim() || `Auto-sync from Obsidian: ${new Date().toLocaleString()}`;
+                await gitInstance.commit(msg);
+            } else {
+                updateStatus("🔄 No changes to commit. Proceeding to Pull/Push.");
+            }
 
-            // 3. Pull without rebase to handle merge conflicts naturally
             try {
-                // MVP: assuming tracking branch is set up or origin main. 
-                // Using no-rebase to trigger standard merge conflict.
+                updateStatus("🔄 Pulling...");
                 await gitInstance.pull('origin', 'main', { '--no-rebase': null });
             } catch (pullErr) {
-                // Check if the error is due to a merge conflict
-                const status = await gitInstance.status();
-                if (status.conflicted.length > 0) {
+                const pullStatus = await gitInstance.status();
+                if (pullStatus.conflicted.length > 0) {
                     notice.setMessage("Resolving conflicts...");
+                    updateStatus("🔄 Resolving conflicts...");
                     await this.resolveConflicts(gitInstance);
                     new Notice("競合が発生しました。あなたの変更は '_conflict' ファイルとして退避されました。", 10000);
                 } else {
-                    throw new Error(`Pull failed (No tracking branch or other error). ${pullErr}`);
+                    throw new Error(`Pull failed: ${pullErr}`);
                 }
             }
 
-            // 4. Push
+            updateStatus("🔄 Pushing...");
             await gitInstance.push();
 
+            updateStatus("✅ Sync Successful!");
             notice.hide();
             new Notice("Sync Successful!");
 
@@ -294,7 +359,9 @@ export class GitSyncView extends ItemView {
         } catch (error) {
             notice.hide();
             console.error("Sync error:", error);
+            showError((error as Error).message);
             new Notice(`Sync failed: ${(error as Error).message}`, 10000);
+            if (syncBtn) syncBtn.disabled = false;
         }
     }
 
