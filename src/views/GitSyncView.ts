@@ -124,19 +124,34 @@ export class GitSyncView extends ItemView {
         const statusLoadingEl = contentEl.createEl("div", { text: "Loading status...", cls: "text-muted" });
 
         try {
+            await gitInstance.fetch();
             const status = await gitInstance.status();
             statusLoadingEl.remove();
 
             const hasChanges = status.files.length > 0;
             const hasUnpushed = status.ahead > 0;
+            const hasUnpulled = status.behind > 0;
 
-            if (!hasChanges && !hasUnpushed) {
+            if (!hasChanges && !hasUnpushed && !hasUnpulled) {
                 contentEl.createEl("p", {
                     text: "No changes. You are up to date.",
                     cls: "text-success",
                 });
                 contentEl.lastElementChild?.setAttribute("style", "margin: 0;");
                 return;
+            }
+
+            if (hasUnpulled) {
+                const warnEl = contentEl.createEl("div", {
+                    cls: "team-git-sync-warning"
+                });
+                warnEl.style.padding = "8px";
+                warnEl.style.backgroundColor = "rgba(0, 150, 255, 0.2)";
+                warnEl.style.border = "1px solid rgba(0, 150, 255, 0.5)";
+                warnEl.style.borderRadius = "4px";
+                warnEl.style.marginBottom = "10px";
+                warnEl.style.color = "var(--text-normal)";
+                warnEl.textContent = `⬇️ リモートに ${status.behind} 件の更新があります（未Pull）`;
             }
 
             if (hasUnpushed) {
