@@ -78,7 +78,6 @@ export class GitSyncView extends ItemView {
         contentEl.empty();
         titleEl.textContent = "All Repositories";
 
-        new Notice("Refreshing Git Status...");
         const loadingEl = contentEl.createEl("div", { text: "Locating repositories..." });
 
         try {
