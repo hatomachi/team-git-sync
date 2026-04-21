@@ -340,6 +340,23 @@ export class GitSyncView extends ItemView {
         try {
             updateStatus("🔄 Checking status...");
             const status = await gitInstance.status();
+            
+            const currentBranch = status.current;
+            if (!currentBranch) {
+                throw new Error("現在のブランチを特定できません（Detached HEAD状態の可能性があります）。");
+            }
+
+            let remoteBranchName = currentBranch;
+            try {
+                const upstream = await gitInstance.revparse(['--abbrev-ref', '@{u}']);
+                if (upstream && typeof upstream === 'string' && upstream.includes('/')) {
+                    const parts = upstream.split('/');
+                    remoteBranchName = parts.slice(1).join('/');
+                }
+            } catch (e) {
+                console.debug(`Upstream branch fetch failed, using local branch: ${currentBranch}`);
+            }
+
             const hasChanges = status.files.length > 0;
 
             if (hasChanges) {
@@ -352,8 +369,8 @@ export class GitSyncView extends ItemView {
             }
 
             try {
-                updateStatus("🔄 Pulling...");
-                await gitInstance.pull('origin', 'main', { '--no-rebase': null });
+                updateStatus(`🔄 Pulling (${remoteBranchName})...`);
+                await gitInstance.pull('origin', remoteBranchName, { '--no-rebase': null });
             } catch (pullErr) {
                 const pullStatus = await gitInstance.status();
                 if (pullStatus.conflicted.length > 0) {
@@ -366,8 +383,8 @@ export class GitSyncView extends ItemView {
                 }
             }
 
-            updateStatus("🔄 Pushing...");
-            await gitInstance.push();
+            updateStatus(`🔄 Pushing (${currentBranch})...`);
+            await gitInstance.push('origin', currentBranch);
 
             updateStatus("✅ Sync Successful!");
             notice.hide();
