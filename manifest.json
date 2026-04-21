@@ -1,7 +1,7 @@
 {
     "id": "team-git-sync",
     "name": "Team Git Sync",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "minAppVersion": "1.4.0",
     "description": "チーム共有Vault向けのカスタムGit同期プラグイン。ファイルの差分確認、個別Revert、競合時の別名退避機能を提供します。",
     "author": "S-Ikari",
